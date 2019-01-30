@@ -1,41 +1,34 @@
 #include <stdio.h>
 #include <stdlib.h>
-#include <sys/socket.h>
 #include <string.h>
+#include <stdarg.h>
+#include <sys/socket.h>
+#include <netinet/ether.h>
+//#include <net/if.h>
+#include <arpa/inet.h>
+#include <sys/ioctl.h>
+#include <linux/wireless.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/if_ether.h>
-#include <linux/wireless.h>
+#include <linux/if_packet.h>
 #include <unistd.h>
 #include <errno.h>
-//#include "ieee802_1x_defs.h"
-//#include "common.h"
+#include "define.h"
 #include "hostapd_test.h"
 
-#ifndef WPA_TYPES_DEFINED
-#ifdef CONFIG_USE_INTTYPES_H
-#include <inttypes.h>
-#else
-#include <stdint.h>
-#endif
-
-typedef uint64_t u64;
-typedef uint32_t u32;
-typedef uint16_t u16;
-typedef uint8_t u8;
-typedef int64_t s64;
-typedef int32_t s32;
-typedef int16_t s16;
-typedef int8_t s8;
-#define WPA_TYPES_DEFINED
-#endif /* !WPA_TYPES_DEFINED */
 
 #define TRUE 1
 #define FALSE 0
 
 #define WLAN_SA_QUERY_TR_ID_LEN 2
+int fd[2];
+char default_bssid[6]={00,0x90,0x4C,0x88,0x88,0x89};
+char default_ifname[32]="ath0";
 
-struct ieee80211_mgmt {
+
+struct ieee80211_mgmt 
+{
 	le16 frame_control;
 	le16 duration;
 	u8 da[6];
@@ -217,31 +210,11 @@ struct netlink_data {
 	int sock;
 };
 
+static inline int is_broadcast_ether_addr(const u8 *addr)
+{
+	return (addr[0] & addr[1] & addr[2] & addr[3] & addr[4] & addr[5]) == 0xff;
+}
 
-struct atheros_driver_data {
-//	struct hostapd_data *hapd;/* back pointer */
-
-//	char	iface[IFNAMSIZ + 1];
-//	int     ifindex;
-//	struct l2_packet_data *sock_xmit;	/* raw packet xmit socket */
-//	struct l2_packet_data *sock_recv;	/* raw packet recv socket */
-//	int	ioctl_sock;			/* socket for ioctl() use */
-//	struct netlink_data *netlink;
-//	int	we_version;
-//	int fils_en;			/* FILS enable/disable in driver */
-//	u8	acct_mac[ETH_ALEN];
-//	struct hostap_sta_driver_data acct_data;
-
-//	struct l2_packet_data *sock_raw; /* raw 802.11 management frames */
-//	struct wpabuf *wpa_ie;
-//	struct wpabuf *wps_beacon_ie;
-//	struct wpabuf *wps_probe_resp_ie;
-//	struct wpa_driver_capa capa;
-	u8	own_addr[ETH_ALEN];
-	int has_capability;
-};
-
-int fd[2];
 
 /**
  * wpa_printf - conditional printf
@@ -269,8 +242,9 @@ void wpa_printf(int level, const char *fmt, ...)
 	va_end(ap);
 }
 
-void wpa_hexdump(int level, const char *title, const void *buf, size_t len)
+void wpa_hexdump(int level, const char *title, const u8 *buf, size_t len)
 {
+    int i;
 	printf("%s - hexdump(len=%lu):", title, (unsigned long) len);
 	if (buf == NULL)
     {
@@ -312,16 +286,16 @@ int eloop_cancel_timeout(eloop_timeout_handler handler,
 	struct eloop_timeout *timeout, *prev;
 	int removed = 0;
 
-	dl_list_for_each_safe(timeout, prev, &eloop.timeout,struct eloop_timeout, list) 
-	{
-		if (timeout->handler == handler &&
-		    (timeout->eloop_data == eloop_data ||eloop_data == ELOOP_ALL_CTX) &&
-		    (timeout->user_data == user_data ||user_data == ELOOP_ALL_CTX)) 
-		{
-			eloop_remove_timeout(timeout);
-			removed++;
-		}
-	}
+//	dl_list_for_each_safe(timeout, prev, &eloop.timeout,struct eloop_timeout, list) 
+//	{
+//		if (timeout->handler == handler &&
+//		    (timeout->eloop_data == eloop_data ||eloop_data == ELOOP_ALL_CTX) &&
+//		    (timeout->user_data == user_data ||user_data == ELOOP_ALL_CTX)) 
+//		{
+//			eloop_remove_timeout(timeout);
+//			removed++;
+//		}
+//	}
 	return removed;
 }
 
@@ -344,7 +318,7 @@ static void wpa_free_sta_sm(struct wpa_state_machine *sm)
 {
 	if (sm->GUpdateStationKeys)
     {
-		sm->group->GKeyDoneStations--;
+//		sm->group->GKeyDoneStations--;
 		sm->GUpdateStationKeys = FALSE;
 	}
 	free(sm->last_rx_eapol_key);
@@ -358,7 +332,7 @@ static void wpa_rekey_ptk(void *eloop_ctx, void *timeout_ctx)
 	struct wpa_state_machine *sm = timeout_ctx;
 
 	wpa_request_new_ptk(sm);
-	wpa_sm_step(sm);
+//	wpa_sm_step(sm);
 }
 
 void wpa_remove_ptk(struct wpa_state_machine *sm)
@@ -370,7 +344,7 @@ void wpa_remove_ptk(struct wpa_state_machine *sm)
 	    wpa_printf(MSG_DEBUG,"RSN: PTK removal from the driver failed");
     }
 	sm->pairwise_set = FALSE;
-	eloop_cancel_timeout(wpa_rekey_ptk, sm->wpa_auth, sm);
+//	eloop_cancel_timeout(wpa_rekey_ptk, sm->wpa_auth, sm);
 }
 
 void mlme_deletekeys_request(struct hostapd_data *hapd, struct sta_info *sta)
@@ -394,7 +368,7 @@ static void ap_sta_deauth_cb_timeout(void *eloop_ctx, void *timeout_ctx)
 	struct sta_info *sta = timeout_ctx;
 
 	wpa_printf(MSG_DEBUG, "%s: Deauthentication callback for STA " MACSTR,hapd->conf->iface, MAC2STR(sta->addr));
-	mlme_deauthenticate_indication(hapd, sta, sta->deauth_reason);
+//	mlme_deauthenticate_indication(hapd, sta, sta->deauth_reason);
 }
 
 static void ap_sta_disassoc_cb_timeout(void *eloop_ctx, void *timeout_ctx)
@@ -403,8 +377,8 @@ static void ap_sta_disassoc_cb_timeout(void *eloop_ctx, void *timeout_ctx)
 	struct sta_info *sta = timeout_ctx;
 
 	wpa_printf(MSG_DEBUG, "%s: Disassociation callback for STA " MACSTR,hapd->conf->iface, MAC2STR(sta->addr));
-	ap_sta_remove(hapd, sta);
-	mlme_disassociate_indication(hapd, sta, sta->disassoc_reason);
+//	ap_sta_remove(hapd, sta);
+//	mlme_disassociate_indication(hapd, sta, sta->disassoc_reason);
 }
 
 void ap_sta_clear_disconnect_timeouts(struct hostapd_data *hapd,
@@ -458,17 +432,17 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 	/* Start accounting here, if IEEE 802.1X and WPA are not used.
 	 * IEEE 802.1X/WPA code will start accounting after the station has
 	 * been authorized. */
-	if (!hapd->conf->ieee802_1x && !hapd->conf->wpa && !hapd->conf->osen)
-    {
-		ap_sta_set_authorized(hapd, sta, 1);
-		os_get_reltime(&sta->connected_time);
-		accounting_sta_start(hapd, sta);
-	}
-    
+//	if (!hapd->conf->ieee802_1x && !hapd->conf->wpa && !hapd->conf->osen)
+//    {
+//		ap_sta_set_authorized(hapd, sta, 1);
+//		os_get_reltime(&sta->connected_time);
+//		accounting_sta_start(hapd, sta);
+//	}
+
+#ifdef GJF
 	if (reassoc)
     {
-		if (sta->auth_alg != WLAN_AUTH_FT &&
-		    !(sta->flags & (WLAN_STA_WPS | WLAN_STA_MAYBE_WPS)))
+		if (!(sta->flags & (WLAN_STA_WPS | WLAN_STA_MAYBE_WPS)))
 		{
 		    wpa_auth_sm_event(sta->wpa_sm, WPA_REAUTH);
         }
@@ -477,6 +451,7 @@ void hostapd_new_assoc_sta(struct hostapd_data *hapd, struct sta_info *sta,
 	{
 	    wpa_auth_sta_associated(hapd->wpa_auth, sta->wpa_sm);
     }
+#endif
 
 }
 
@@ -556,10 +531,6 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 			elems->ext_supp_rates = pos;
 			elems->ext_supp_rates_len = elen;
 			break;
-//		case WLAN_EID_VENDOR_SPECIFIC:
-//			if (ieee802_11_parse_vendor_specific(pos, elen,elems,show_errors))
-//				unknown++;
-//			break;
 		case WLAN_EID_RSN:
 			elems->rsn_ie = pos;
 			elems->rsn_ie_len = elen;
@@ -570,32 +541,10 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 			elems->supp_channels = pos;
 			elems->supp_channels_len = elen;
 			break;
-		case WLAN_EID_MOBILITY_DOMAIN:
-			if (elen < sizeof(struct rsn_mdie))
-				break;
-			elems->mdie = pos;
-			elems->mdie_len = elen;
-			break;
-		case WLAN_EID_FAST_BSS_TRANSITION:
-			if (elen < sizeof(struct rsn_ftie))
-				break;
-			elems->ftie = pos;
-			elems->ftie_len = elen;
-			break;
 		case WLAN_EID_TIMEOUT_INTERVAL:
 			if (elen != 5)
 				break;
 			elems->timeout_int = pos;
-			break;
-		case WLAN_EID_HT_CAP:
-			if (elen < sizeof(struct ieee80211_ht_capabilities))
-				break;
-			elems->ht_capabilities = pos;
-			break;
-		case WLAN_EID_HT_OPERATION:
-			if (elen < sizeof(struct ieee80211_ht_operation))
-				break;
-			elems->ht_operation = pos;
 			break;
 		case WLAN_EID_MESH_CONFIG:
 			elems->mesh_config = pos;
@@ -608,16 +557,6 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 		case WLAN_EID_PEER_MGMT:
 			elems->peer_mgmt = pos;
 			elems->peer_mgmt_len = elen;
-			break;
-		case WLAN_EID_VHT_CAP:
-			if (elen < sizeof(struct ieee80211_vht_capabilities))
-				break;
-			elems->vht_capabilities = pos;
-			break;
-		case WLAN_EID_VHT_OPERATION:
-			if (elen < sizeof(struct ieee80211_vht_operation))
-				break;
-			elems->vht_operation = pos;
 			break;
 		case WLAN_EID_VHT_OPERATING_MODE_NOTIFICATION:
 			if (elen != 1)
@@ -706,11 +645,6 @@ ParseRes ieee802_11_parse_elems(const u8 *start, size_t len,
 		case WLAN_EID_FRAGMENT:
 			/* TODO */
 			break;
-//		case WLAN_EID_EXTENSION:
-//			if (ieee802_11_parse_extension(pos, elen, elems,
-//						       show_errors))
-//				unknown++;
-//			break;
 		default:
 			unknown++;
 			if (!show_errors)
@@ -820,7 +754,7 @@ int wpa_parse_wpa_ie_wpa(const u8 *wpa_ie, size_t wpa_ie_len,
 	data->proto = WPA_PROTO_WPA;
 	data->pairwise_cipher = WPA_CIPHER_TKIP;
 	data->group_cipher = WPA_CIPHER_TKIP;
-	data->key_mgmt = WPA_KEY_MGMT_IEEE8021X;
+	data->key_mgmt = WPA_KEY_MGMT_PSK;
 	data->capabilities = 0;
 	data->pmkid = NULL;
 	data->num_pmkid = 0;
@@ -939,8 +873,8 @@ int wpa_parse_wpa_ie_rsn(const u8 *rsn_ie, size_t rsn_ie_len,struct wpa_ie_data 
 	memset(data, 0, sizeof(*data));
 	data->proto = WPA_PROTO_RSN;
 	data->pairwise_cipher = WPA_CIPHER_CCMP;
-	data->group_cipher = WPA_CIPHER_CCMP;
-	data->key_mgmt = WPA_KEY_MGMT_IEEE8021X;
+	data->group_cipher = WPA_CIPHER_TKIP;
+	data->key_mgmt = WPA_KEY_MGMT_PSK;
 	data->capabilities = 0;
 	data->pmkid = NULL;
 	data->num_pmkid = 0;
@@ -1098,7 +1032,7 @@ set80211priv(struct atheros_driver_data *drv, int op, void *data, int len)
 		do_inline = 0;
 
 	memset(&iwr, 0, sizeof(iwr));
-	strlcpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
+	strncpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
 	if (do_inline)
     {
 		/*
@@ -1191,17 +1125,19 @@ int hostapd_set_sta_flags(struct hostapd_data *hapd, struct sta_info *sta)
 	flags_and = total_flags | ~set_flags;
 	return hostapd_sta_set_flags(hapd, sta->addr, total_flags,flags_or, flags_and);
 }
+
+static const u32 dot11RSNAConfigPairwiseUpdateCount = 4;
 void sm_WPA_PTK_PTKSTART_Enter(struct wpa_state_machine *sm, int global)
 {
 	u8 buf[2 + RSN_SELECTOR_LEN + PMKID_LEN], *pmkid = NULL;
 	size_t pmkid_len = 0;
 
 /****** SM_ENTRY_MA(WPA_PTK, PTKSTART, wpa_ptk); ******************/
-if (!global || sm->wpa_ptk_state != WPA_PTK_PTKSTART) 
-{
-    sm->changed = TRUE;
-}
-sm->wpa_ptk_state = WPA_PTK_PTKSTART;
+    if (!global || sm->wpa_ptk_state != WPA_PTK_PTKSTART) 
+    {
+        sm->changed = TRUE;
+    }
+    sm->wpa_ptk_state = WPA_PTK_PTKSTART;
 /***********************************************************************************/
 	sm->PTKRequest = FALSE;
 	sm->TimeoutEvt = FALSE;
@@ -1352,7 +1288,6 @@ int wpa_validate_wpa_ie(struct wpa_authenticator *wpa_auth,
 	else
 		sm->wpa = WPA_VERSION_WPA;
     
-	sm->pmksa = NULL;
 
 	if (sm->wpa_ie == NULL || sm->wpa_ie_len < wpa_ie_len)
     {
@@ -1387,14 +1322,8 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 		wpa_printf(MSG_DEBUG,"hostapd_notif_assoc: Skip event with no address");
 		return -1;
 	}
-    ieee802_11_parse_elems(req_ies, req_ies_len, &elems, 0);
-    if (elems.wps_ie)
-    {
-		ie = elems.wps_ie - 2;
-		ielen = elems.wps_ie_len + 2;
-		wpa_printf(MSG_DEBUG, "STA included WPS IE in (Re)AssocReq");
-	}
-    else if (elems.rsn_ie)
+    ieee802_11_parse_elems(req_ies, req_ies_len, &elems, 0);//·ÖÎö¹ÜÀíÖ¡ÖÐµÄIE×Ö¶Î³¤¶ÈÊÇ·ñºÏ·¨¡£
+    if (elems.rsn_ie)
     {
 		ie = elems.rsn_ie - 2;
 		ielen = elems.rsn_ie_len + 2;
@@ -1479,6 +1408,10 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
     		goto fail;
         }
    }
+   else
+   {
+        printf("´Î¹ØÁªÖ¡Ã»ÓÐWPA IE»ò RSN IE\n");
+   }
 
     new_assoc = (sta->flags & WLAN_STA_ASSOC) == 0;
 	sta->flags |= WLAN_STA_AUTH | WLAN_STA_ASSOC;
@@ -1491,7 +1424,7 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 
 	sta->wpa_sm->PTK_valid = FALSE;
 	memset(&(sta->wpa_sm->PTK), 0, sizeof(sta->wpa_sm->PTK));
-	wpa_remove_ptk(sm);
+	wpa_remove_ptk(sta->wpa_sm);
 	if (sta->wpa_sm->in_step_loop)
     {
 		/*
@@ -1501,20 +1434,22 @@ int hostapd_notif_assoc(struct hostapd_data *hapd, const u8 *addr,
 		sta->wpa_sm->changed = TRUE;
 		return 0;
 	}
-	wpa_sm_step(sta->wpa_sm);
+    sm_WPA_PTK_PTKSTART_Enter(sta->wpa_sm,1); 
 	hostapd_new_assoc_sta(hapd, sta, !new_assoc);
 
-	ieee802_1x_notify_port_enabled(sta->eapol_sm, 1);
+//	ieee802_1x_notify_port_enabled(sta->eapol_sm, 1);
 
     return 0;
 fail:
-	hostapd_drv_sta_disassoc(hapd, sta->addr, reason);
-	ap_free_sta(hapd, sta);
+//	hostapd_drv_sta_disassoc(hapd, sta->addr, reason);
+//	ap_free_sta(hapd, sta);
 	return -1;
 }
 
 static inline void drv_event_assoc(void *ctx, const u8 *addr, const u8 *ie,size_t ielen, int reassoc)
 {
+	struct hostapd_data *hapd = ctx;
+
 	union wpa_event_data event;
 	memset(&event, 0, sizeof(event));
 	event.assoc_info.reassoc = reassoc;
@@ -1522,10 +1457,10 @@ static inline void drv_event_assoc(void *ctx, const u8 *addr, const u8 *ie,size_
 	event.assoc_info.req_ies_len = ielen;
 	event.assoc_info.addr = addr;
     
-    hostapd_notif_assoc(hapd, event->assoc_info.addr,
-       		    event->assoc_info.req_ies,
-        		event->assoc_info.req_ies_len,
-    		    event->assoc_info.reassoc);
+    hostapd_notif_assoc(hapd, event.assoc_info.addr,
+       		    event.assoc_info.req_ies,
+        		event.assoc_info.req_ies_len,
+    		    event.assoc_info.reassoc);
 
 }
 static void atheros_raw_receive(void *ctx, const u8 *src_addr, const u8 *buf,size_t len)
@@ -1649,8 +1584,8 @@ static void atheros_wireless_event_wireless(struct atheros_driver_data *drv,
 			char *dpos = (char *) &iwe_buf.u.data.length;
 			int dlen = dpos - (char *) &iwe_buf;
 			memcpy(dpos, pos + IW_EV_LCP_LEN,sizeof(struct iw_event) - dlen);
-		} 
-        else 
+		}
+        else
         {
 			memcpy(&iwe_buf, pos, sizeof(struct iw_event));
 			custom += IW_EV_POINT_OFF;
@@ -1677,17 +1612,17 @@ static void atheros_wireless_event_wireless(struct atheros_driver_data *drv,
 				return;
 			buf = malloc(iwe->u.data.length + 1);
 			if (buf == NULL)
-				return;		/* XXX */
+				return;	/* XXX */
 			memcpy(buf, custom, iwe->u.data.length);
 			buf[iwe->u.data.length] = '\0';
 
-			if (iwe->u.data.flags != 0) {
-				atheros_wireless_event_atheros_custom(
-					drv, (int) iwe->u.data.flags,
-					buf, len);
-			} else {
-				atheros_wireless_event_wireless_custom(
-					drv, buf, buf + iwe->u.data.length);
+			if (iwe->u.data.flags != 0)
+            {
+//				atheros_wireless_event_atheros_custom(drv, (int) iwe->u.data.flags,buf, len);
+			} 
+            else 
+            {
+				atheros_wireless_event_wireless_custom(drv, buf, buf + iwe->u.data.length);
 			}
 			free(buf);
 			break;
@@ -1835,7 +1770,7 @@ struct l2_packet_data * l2_packet_init(
 	l2 = os_zalloc(sizeof(struct l2_packet_data));
 	if (l2 == NULL)
 		return NULL;
-	strlcpy(l2->ifname, ifname, sizeof(l2->ifname));
+	strncpy(l2->ifname, ifname, sizeof(l2->ifname));
 	l2->rx_callback = rx_callback;
 	l2->rx_callback_ctx = rx_callback_ctx;
 	l2->l2_hdr = l2_hdr;
@@ -1848,7 +1783,7 @@ struct l2_packet_data * l2_packet_init(
 		return NULL;
 	}
 	memset(&ifr, 0, sizeof(ifr));
-	strlcpy(ifr.ifr_name, l2->ifname, sizeof(ifr.ifr_name));
+	strncpy(ifr.ifr_name, l2->ifname, sizeof(ifr.ifr_name));
 	if (ioctl(l2->fd, SIOCGIFINDEX, &ifr) < 0)
     {
 		wpa_printf(MSG_ERROR, "%s: ioctl[SIOCGIFINDEX]: %s",__func__, strerror(errno));
@@ -1920,7 +1855,6 @@ atheros_init(struct hostapd_data *hapd, struct wpa_init_params *params)
 	struct atheros_driver_data *drv;
 	struct ifreq ifr;
 	struct iwreq iwr;
-//	char brname[IFNAMSIZ];
 
 	drv = os_zalloc(sizeof(struct atheros_driver_data));
 	if (drv == NULL)
@@ -1939,7 +1873,7 @@ atheros_init(struct hostapd_data *hapd, struct wpa_init_params *params)
 	memcpy(drv->iface, params->ifname, sizeof(drv->iface));
 
 	memset(&ifr, 0, sizeof(ifr));
-	strlcpy(ifr.ifr_name, drv->iface, sizeof(ifr.ifr_name));
+	strncpy(ifr.ifr_name, drv->iface, sizeof(ifr.ifr_name));
 	if (ioctl(drv->ioctl_sock, SIOCGIFINDEX, &ifr) != 0) 
     {
 		wpa_printf(MSG_ERROR, "ioctl(SIOCGIFINDEX): %s",strerror(errno));
@@ -1957,7 +1891,7 @@ atheros_init(struct hostapd_data *hapd, struct wpa_init_params *params)
     drv->sock_recv = drv->sock_xmit;
 
 	memset(&iwr, 0, sizeof(iwr));
-	strlcpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
+	strncpy(iwr.ifr_name, drv->iface, IFNAMSIZ);
 
 	iwr.u.mode = IW_MODE_MASTER;
 
@@ -1992,8 +1926,157 @@ bad:
 	return NULL;
 }
 
-char default_bssid[6]={00,0x90,0x4C,0x88,0x88,0x89};
-char default_ifname[32]="ath0";
+
+static int
+atheros_set_key(const char *ifname, void *priv, enum wpa_alg alg,
+		const u8 *addr, int key_idx, int set_tx, const u8 *seq,
+		size_t seq_len, const u8 *key, size_t key_len)
+{
+	struct atheros_driver_data *drv = priv;
+	struct ieee80211req_key wk;
+	u_int8_t cipher;
+	int ret;
+
+	if (alg == WPA_ALG_NONE)
+		return 0;//atheros_del_key(drv, addr, key_idx);
+
+	wpa_printf(MSG_DEBUG, "%s: alg=%d addr=%s key_idx=%d",
+		   __func__, alg, ether_sprintf(addr), key_idx);
+
+	switch (alg) {
+	case WPA_ALG_WEP:
+		cipher = IEEE80211_CIPHER_WEP;
+		break;
+	case WPA_ALG_TKIP:
+		cipher = IEEE80211_CIPHER_TKIP;
+		break;
+	case WPA_ALG_CCMP:
+		cipher = IEEE80211_CIPHER_AES_CCM;
+		break;
+	default:
+		wpa_printf(MSG_INFO, "%s: unknown/unsupported algorithm %d",__func__, alg);
+		return -1;
+	}
+
+	if (key_len > sizeof(wk.ik_keydata)) {
+		wpa_printf(MSG_INFO, "%s: key length %lu too big", __func__,
+			   (unsigned long) key_len);
+		return -3;
+	}
+
+	memset(&wk, 0, sizeof(wk));
+	wk.ik_type = cipher;
+	wk.ik_flags = IEEE80211_KEY_RECV | IEEE80211_KEY_XMIT;
+	if (addr == NULL || is_broadcast_ether_addr(addr)) {
+		memset(wk.ik_macaddr, 0xff, IEEE80211_ADDR_LEN);
+		wk.ik_keyix = key_idx;
+		if (set_tx)
+			wk.ik_flags |= IEEE80211_KEY_DEFAULT;
+	} else {
+		memcpy(wk.ik_macaddr, addr, IEEE80211_ADDR_LEN);
+		wk.ik_keyix = IEEE80211_KEYIX_NONE;
+	}
+	wk.ik_keylen = key_len;
+	memcpy(wk.ik_keydata, key, key_len);
+
+	ret = set80211priv(drv, IEEE80211_IOCTL_SETKEY, &wk, sizeof(wk));
+	if (ret < 0) {
+		wpa_printf(MSG_DEBUG, "%s: Failed to set key (addr %s"
+			   " key_idx %d alg %d key_len %lu set_tx %d)",
+			   __func__, ether_sprintf(wk.ik_macaddr), key_idx,
+			   alg, (unsigned long) key_len, set_tx);
+	}
+
+	return ret;
+}
+
+int hostapd_drv_set_key(const char *ifname, struct hostapd_data *hapd,
+			enum wpa_alg alg, const u8 *addr,
+			int key_idx, int set_tx,
+			const u8 *seq, size_t seq_len,
+			const u8 *key, size_t key_len)
+{
+	if (hapd->driver == NULL || hapd->driver->set_key == NULL)
+		return 0;
+	return hapd->driver->set_key(ifname, hapd->drv_priv, alg, addr,
+				     key_idx, set_tx, seq, seq_len, key,
+				     key_len);
+}
+static int hostapd_wpa_auth_set_key(void *ctx, int vlan_id, enum wpa_alg alg,
+				    const u8 *addr, int idx, u8 *key,
+				    size_t key_len)
+{
+	struct hostapd_data *hapd = ctx;
+	const char *ifname = hapd->conf->iface;
+
+	return hostapd_drv_set_key(ifname, hapd, alg, addr, idx, 1, NULL, 0,
+				   key, key_len);
+}
+
+    
+int hostapd_setup_wpa(struct hostapd_data *hapd)
+{
+	struct wpa_auth_config _conf;
+	struct wpa_auth_callbacks cb;
+	const u8 *wpa_ie;
+	size_t wpa_ie_len;
+
+//	hostapd_wpa_auth_conf(hapd->conf, hapd->iconf, &_conf);
+//	if (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_EAPOL_TX_STATUS)
+//		_conf.tx_status = 1;
+//	if (hapd->iface->drv_flags & WPA_DRIVER_FLAGS_AP_MLME)
+//		_conf.ap_mlme = 1;
+	memset(&cb, 0, sizeof(cb));
+	cb.ctx = hapd;
+	cb.disconnect = NULL;//hostapd_wpa_auth_disconnect;
+	cb.mic_failure_report = NULL;//hostapd_wpa_auth_mic_failure_report;
+	cb.psk_failure_report = NULL;//hostapd_wpa_auth_psk_failure_report;
+	cb.set_eapol = NULL;//hostapd_wpa_auth_set_eapol;
+	cb.get_eapol = NULL;//hostapd_wpa_auth_get_eapol;
+	cb.get_psk = NULL;//hostapd_wpa_auth_get_psk;
+	cb.get_msk = NULL;//hostapd_wpa_auth_get_msk;
+	cb.set_key = hostapd_wpa_auth_set_key;
+	cb.get_seqnum = NULL;//hostapd_wpa_auth_get_seqnum;
+	cb.send_eapol = NULL;//hostapd_wpa_auth_send_eapol;
+	cb.for_each_sta = NULL;//hostapd_wpa_auth_for_each_sta;
+	cb.for_each_auth = NULL;//hostapd_wpa_auth_for_each_auth;
+	cb.send_ether = NULL;//hostapd_wpa_auth_send_ether;
+	hapd->wpa_auth = NULL;//wpa_init(hapd->own_addr, &_conf, &cb);
+//	if (hapd->wpa_auth == NULL) 
+//	{
+//		wpa_printf(MSG_ERROR, "WPA initialization failed.");
+//		return -1;
+//	}
+
+//	if (hostapd_set_privacy(hapd, 1)) 
+//	{
+//		wpa_printf(MSG_ERROR, "Could not set PrivacyInvoked ""for interface %s", hapd->conf->iface);
+//		return -1;
+//	}
+//	wpa_ie = wpa_auth_get_wpa_ie(hapd->wpa_auth, &wpa_ie_len);
+//	if (hostapd_set_generic_elem(hapd, wpa_ie, wpa_ie_len)) 
+//	{
+//		wpa_printf(MSG_ERROR, "Failed to configure WPA IE for ""the kernel driver.");
+//		return -1;
+//	}
+	return 0;
+}
+
+const struct wpa_driver_ops wpa_driver_atheros_ops = 
+{
+	.name			= "atheros",
+	.hapd_init		= atheros_init,
+	.hapd_deinit	= NULL, //atheros_deinit,
+	.set_key		= atheros_set_key,
+	.sta_set_flags	= atheros_sta_set_flags,
+//	.read_sta_data		= atheros_read_sta_driver_data,
+	.hapd_send_eapol= NULL, //atheros_send_eapol,
+	.sta_disassoc	= NULL, //atheros_sta_disassoc,
+	.sta_deauth		= NULL, //atheros_sta_deauth,
+	.hapd_set_ssid	= NULL, //atheros_set_ssid,
+	.hapd_get_ssid	= NULL, //atheros_get_ssid,
+};
+
 int main(int argc,char **argv)
 {
     fd_set readfds;
@@ -2003,19 +2086,20 @@ int main(int argc,char **argv)
     
     wpa_debug_level = MSG_EXCESSIVE;
     struct hostapd_data hapd;
-    memset(hapd,0,sizeof(hapd));
+    memset(&hapd,0,sizeof(hapd));
 	struct wpa_init_params params;
-    memset(hapd,0,sizeof(params));
+    memset(&params,0,sizeof(params));
     
 	params.bssid = default_bssid;
 	params.ifname =default_ifname;
     memset(&params, 0, sizeof(params));
-	params.own_addr = hapd->own_addr;
+	params.own_addr = hapd.own_addr;
     
-    drv = atheros_init(hapd,&params);
+    hapd.driver = &wpa_driver_atheros_ops;
+    hostapd_setup_wpa(&hapd);
+    drv = atheros_init(&hapd,&params);
     fd[0] = drv->netlink->sock;
     fd[1] = drv->sock_xmit->fd;
-    
 
 
     while(1) 
@@ -2026,24 +2110,24 @@ int main(int argc,char **argv)
         if(fd[0] == -1 && fd[1] != -1)
         {
             maxfd = fd[1];
-            FD_SET(fd[1],&readfds)); //Ìí¼ÓÃèÊö·û 
+            FD_SET(fd[1],&readfds); //Ìí¼ÓÃèÊö·û 
 
         }
         else if(fd[0] != -1 && fd[1] == -1)
         {
              maxfd = fd[0];
-             FD_SET(fd[0],&readfds)); //Ìí¼ÓÃèÊö·û 
+             FD_SET(fd[0],&readfds); //Ìí¼ÓÃèÊö·û 
         }
         else if(fd[0] != -1 && fd[1] != -1)
         {
             maxfd = (fd[0] > fd[1]) ? fd[0] : fd[1];
-            FD_SET(fd[0],&readfds)); //Ìí¼ÓÃèÊö·û 
-            FD_SET(fd[1],&readfds)); //Ìí¼ÓÃèÊö·û 
+            FD_SET(fd[0],&readfds); //Ìí¼ÓÃèÊö·û 
+            FD_SET(fd[1],&readfds); //Ìí¼ÓÃèÊö·û 
         }
         else
         {
             printf("ÃèÊö·û³õÊ¼»¯Ê§°Ü£¬½áÊø³ÌÐò\n");
-            return;
+            return 0;
         }
 
          switch( select(maxfd+1,&readfds,NULL,NULL,&tv))   //selectÊ¹ÓÃ 
@@ -2066,7 +2150,7 @@ int main(int argc,char **argv)
                    }
                    else if(FD_ISSET(drv->sock_xmit->fd,&readfds))
                    {
-                        l2_packet_receive();
+//                        l2_packet_receive();
                    }
            }// end switch 
     }//end while 

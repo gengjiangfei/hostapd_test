@@ -4,6 +4,20 @@
 #ifndef IFNAMSIZ
 #define IFNAMSIZ 16
 #endif
+struct ieee80211req_key {
+	u_int8_t	ik_type;	/* key/cipher type */
+	u_int8_t	ik_pad;
+	u_int16_t	ik_keyix;	/* key index */
+	u_int8_t	ik_keylen;	/* key length in bytes */
+	u_int8_t	ik_flags;
+/* NB: IEEE80211_KEY_XMIT and IEEE80211_KEY_RECV defined elsewhere */
+#define	IEEE80211_KEY_DEFAULT	0x80	/* default xmit key */
+	u_int8_t	ik_macaddr[IEEE80211_ADDR_LEN];
+	u_int64_t	ik_keyrsc;	/* key receive sequence counter */
+	u_int64_t	ik_keytsc;	/* key transmit sequence counter */
+	u_int8_t	ik_keydata[IEEE80211_KEYBUF_SIZE+IEEE80211_MICBUF_SIZE];
+} __packed;
+
 struct l2_packet_data
 {
 	int fd; /* packet socket for EAPOL frames */
@@ -25,104 +39,53 @@ struct sta_info
 	be32 ipaddr;
 	u16 aid; /* STA's unique AID (1 .. 2007) or 0 if not yet assigned */
 	u32 flags; /* Bitfield of WLAN_STA_* */
+    struct wpa_state_machine *wpa_sm;
+	u16 auth_alg;
+	u16 deauth_reason;
+	u16 disassoc_reason;
+
 };
 
-
-
-/**
- * struct wpa_driver_ops - Driver interface API definition
- *
- * This structure defines the API that each driver interface needs to implement
- * for core wpa_supplicant code. All driver specific functionality is captured
- * in this wrapper.
- */
-struct wpa_driver_ops
+struct hostapd_wpa_psk 
 {
-	const char *name;
-	const char *desc;
-	int (*get_bssid)(void *priv, u8 *bssid);
-	int (*get_ssid)(void *priv, u8 *ssid);
-	int (*set_key)(const char *ifname, void *priv, enum wpa_alg alg,
-		       const u8 *addr, int key_idx, int set_tx,
-		       const u8 *seq, size_t seq_len,
-		       const u8 *key, size_t key_len);
+	struct hostapd_wpa_psk *next;
+	int group;
+	u8 psk[PMK_LEN];
+	u8 addr[ETH_ALEN];
+ };
+ 
+struct hostapd_ssid {
+	u8 ssid[SSID_MAX_LEN];
+	size_t ssid_len;
+	unsigned int ssid_set:1;
+	unsigned int utf8_ssid:1;
+	unsigned int wpa_passphrase_set:1;
+	unsigned int wpa_psk_set:1;
+	struct hostapd_wpa_psk *wpa_psk;
+	char *wpa_passphrase;
+ };
 
-	void * (*init)(void *ctx, const char *ifname);
+struct hostapd_bss_config
+{
+	char iface[IFNAMSIZ + 1];
+	struct hostapd_ssid ssid;
+	int auth_algs; /* bitfield of allowed IEEE 802.11 authentication
+			* algorithms, WPA_AUTH_ALG_{OPEN,SHARED,LEAP} */
 
-	void (*deinit)(void *priv);
-	int (*set_param)(void *priv, const char *param);
-	int (*set_countermeasures)(void *priv, int enabled);
-	int (*deauthenticate)(void *priv, const u8 *addr, int reason_code);
-	int (*associate)(void *priv,
-			 struct wpa_driver_associate_params *params);
-	int (*add_pmkid)(void *priv, const u8 *bssid, const u8 *pmkid);
-	int (*remove_pmkid)(void *priv, const u8 *bssid, const u8 *pmkid);
-	int (*flush_pmkid)(void *priv);
-	int (*get_capa)(void *priv, struct wpa_driver_capa *capa);
-	void (*poll)(void *priv);
-	unsigned int (*get_ifindex)(void *priv);
-	const char * (*get_ifname)(void *priv);
-	const u8 * (*get_mac_addr)(void *priv);
-	int (*set_operstate)(void *priv, int state);
-	int (*mlme_setprotection)(void *priv, const u8 *addr, int protect_type,
-				  int key_type);
-	int (*send_mlme)(void *priv, const u8 *data, size_t data_len,
-			 int noack, unsigned int freq, const u16 *csa_offs,
-			 size_t csa_offs_len);
-	struct wpa_interface_info * (*get_interfaces)(void *global_priv);
+	int wpa; /* bitfield of WPA_PROTO_WPA, WPA_PROTO_RSN */
+	int wpa_key_mgmt;
+    int wpa_pairwise;
+	int wpa_group;
+	int wpa_group_rekey;
+	int wpa_ptk_rekey;
+	int rsn_pairwise;
+    macaddr bssid;
 
-	int (*authenticate)(void *priv,
-			    struct wpa_driver_auth_params *params);
-	int (*set_ap)(void *priv, struct wpa_driver_ap_params *params);
-	int (*set_acl)(void *priv, struct hostapd_acl_params *params);
-	void * (*hapd_init)(struct hostapd_data *hapd,struct wpa_init_params *params);
-
-	void (*hapd_deinit)(void *priv);
-	int (*set_ieee8021x)(void *priv, struct wpa_bss_params *params);
-	int (*set_privacy)(void *priv, int enabled);
-
-	int (*get_seqnum)(const char *ifname, void *priv, const u8 *addr,
-			  int idx, u8 *seq);
-	int (*flush)(void *priv);
-	int (*read_sta_data)(void *priv, struct hostap_sta_driver_data *data,
-			     const u8 *addr);
-	int (*hapd_send_eapol)(void *priv, const u8 *addr, const u8 *data,
-			       size_t data_len, int encrypt,
-			       const u8 *own_addr, u32 flags);
-	int (*sta_deauth)(void *priv, const u8 *own_addr, const u8 *addr,
-			  int reason);
-	int (*sta_disassoc)(void *priv, const u8 *own_addr, const u8 *addr,
-			    int reason);
-	int (*sta_remove)(void *priv, const u8 *addr);
-	int (*hapd_get_ssid)(void *priv, u8 *buf, int len);
-
-	int (*hapd_set_ssid)(void *priv, const u8 *buf, int len);
-	int (*hapd_set_countermeasures)(void *priv, int enabled);
-	int (*sta_add)(void *priv, struct hostapd_sta_add_params *params);
-    int (*sta_clear_stats)(void *priv, const u8 *addr);
-	int (*if_add)(void *priv, enum wpa_driver_if_type type,
-		      const char *ifname, const u8 *addr, void *bss_ctx,
-		      void **drv_priv, char *force_ifname, u8 *if_addr,
-		      const char *bridge, int use_existing, int setup_ap);
-
-	int (*if_remove)(void *priv, enum wpa_driver_if_type type,
-			 const char *ifname);
-	int (*send_ether)(void *priv, const u8 *dst, const u8 *src, u16 proto,
-			  const u8 *data, size_t data_len);
 };
 
-/**
- * struct hostapd_data - hostapd per-BSS data structure
- */
 struct hostapd_data
 {
-//	struct hostapd_iface *iface;
-//	struct hostapd_config *iconf;
-//	struct hostapd_bss_config *conf;
-//	int interface_added; /* virtual interface added for this BSS */
-//	unsigned int started:1;
-//	unsigned int disabled:1;
-//	unsigned int reenable_beacon:1;
+	struct hostapd_bss_config *conf;
 	u8 own_addr[ETH_ALEN];
 	int num_sta; /* number of entries in sta_list */
 	struct sta_info *sta_list; /* STA info list head */
@@ -131,16 +94,13 @@ struct hostapd_data
 	struct sta_info *sta_hash[STA_HASH_SIZE];
 #define AID_WORDS ((2008 + 31) / 32)
 	u32 sta_aid[AID_WORDS];
+	struct wpa_authenticator *wpa_auth;
+
 	const struct wpa_driver_ops *driver;
 	void *drv_priv;
-	void (*new_assoc_sta_cb)(struct hostapd_data *hapd,struct sta_info *sta, int reassoc);
-	struct wpa_authenticator *wpa_auth;
-//	struct eapol_authenticator *eapol_auth;
-//	struct rsn_preauth_interface *preauth_iface;
-//	struct os_reltime michael_mic_failure;
-	int michael_mic_failures;
-	int tkip_countermeasures;
 	struct l2_packet_data *l2;
+	int tkip_countermeasures;
+
 };
 
 struct wpa_init_params
@@ -152,10 +112,34 @@ struct wpa_init_params
 	u8 *own_addr; /* buffer for writing own MAC address */
 };
 
+/**
+ * struct wpa_driver_ops - Driver interface API definition
+ *
+ * This structure defines the API that each driver interface needs to implement
+ * for core wpa_supplicant code. All driver specific functionality is captured
+ * in this wrapper.
+ */
+struct wpa_driver_ops
+{
+	const char *name;
+	int (*set_key)(const char *ifname, void *priv, enum wpa_alg alg,
+		       const u8 *addr, int key_idx, int set_tx,
+		       const u8 *seq, size_t seq_len,
+		       const u8 *key, size_t key_len);
+	void * (*hapd_init)(struct hostapd_data *hapd,struct wpa_init_params *params);
+	void (*hapd_deinit)(void *priv);
+//	int (*read_sta_data)(void *priv, struct hostap_sta_driver_data *data,const u8 *addr);
+	int (*hapd_send_eapol)(void *priv, const u8 *addr, const u8 *data,size_t data_len, int encrypt,const u8 *own_addr, u32 flags);
+	int (*sta_deauth)(void *priv, const u8 *own_addr, const u8 *addr,int reason);
+	int (*sta_disassoc)(void *priv, const u8 *own_addr, const u8 *addr,int reason);
+	int (*hapd_get_ssid)(void *priv, u8 *buf, int len);
+	int (*hapd_set_ssid)(void *priv, const u8 *buf, int len);
+    int (*sta_set_flags)(void *priv, const u8 *addr,unsigned int total_flags, unsigned int flags_or,unsigned int flags_and);
+};
+
+
+
 /***************************** start===>ieee802_11_defs.h*************************************/
-#ifndef __packed
-#define __packed    __attribute__((__packed__))
-#endif
 
 struct ieee80211_hdr
 {
@@ -172,16 +156,6 @@ struct ieee80211_hdr
 struct ieee80211req_mlme
 {
 	u_int8_t	im_op;		/* operation to perform */
-#define	IEEE80211_MLME_ASSOC		1	/* associate station */
-#define	IEEE80211_MLME_DISASSOC		2	/* disassociate station */
-#define	IEEE80211_MLME_DEAUTH		3	/* deauthenticate station */
-#define	IEEE80211_MLME_AUTHORIZE	4	/* authorize station */
-#define	IEEE80211_MLME_UNAUTHORIZE	5	/* unauthorize station */
-#define	IEEE80211_MLME_STOP_BSS		6	/* stop bss */
-#define	IEEE80211_MLME_CLEAR_STATS	7	/* clear station statistic */
-#define	IEEE80211_MLME_AUTH	        8	/* auth resp to station */
-#define	IEEE80211_MLME_REASSOC	    9	/* reassoc to station */
-#define	IEEE80211_MLME_AUTH_FILS    10	/* AUTH - when FILS enabled */
 	u_int8_t	im_ssid_len;	/* length of optional ssid */
 	u_int16_t	im_reason;	/* 802.11 reason code */
 	u_int16_t	im_seq;	        /* seq for auth */
@@ -192,365 +166,6 @@ struct ieee80211req_mlme
 //	struct      ieee80211req_fils_aad  fils_aad;
 } __packed;
 
-#define IEEE80211_HDRLEN (sizeof(struct ieee80211_hdr))
-#define WLAN_FC_GET_TYPE(fc)	(((fc) & 0x000c) >> 2)
-#define WLAN_FC_GET_STYPE(fc)	(((fc) & 0x00f0) >> 4)
-
-#define WLAN_FC_TYPE_MGMT		0
-#define WLAN_FC_TYPE_CTRL		1
-#define WLAN_FC_TYPE_DATA		2
-
-#define WLAN_FC_STYPE_ASSOC_REQ		0
-#define WLAN_FC_STYPE_ASSOC_RESP	1
-#define WLAN_FC_STYPE_REASSOC_REQ	2
-#define WLAN_FC_STYPE_REASSOC_RESP	3
-#define WLAN_FC_STYPE_PROBE_REQ		4
-#define WLAN_FC_STYPE_PROBE_RESP	5
-#define WLAN_FC_STYPE_BEACON		8
-#define WLAN_FC_STYPE_ATIM		9
-#define WLAN_FC_STYPE_DISASSOC		10
-#define WLAN_FC_STYPE_AUTH		11
-#define WLAN_FC_STYPE_DEAUTH		12
-#define WLAN_FC_STYPE_ACTION		13
-
-/* Reason codes (IEEE Std 802.11-2016, 9.4.1.7, Table 9-45) */
-#define WLAN_REASON_UNSPECIFIED 1
-#define WLAN_REASON_PREV_AUTH_NOT_VALID 2
-#define WLAN_REASON_DEAUTH_LEAVING 3
-#define WLAN_REASON_DISASSOC_DUE_TO_INACTIVITY 4
-#define WLAN_REASON_DISASSOC_AP_BUSY 5
-#define WLAN_REASON_CLASS2_FRAME_FROM_NONAUTH_STA 6
-#define WLAN_REASON_CLASS3_FRAME_FROM_NONASSOC_STA 7
-#define WLAN_REASON_DISASSOC_STA_HAS_LEFT 8
-#define WLAN_REASON_STA_REQ_ASSOC_WITHOUT_AUTH 9
-#define WLAN_REASON_PWR_CAPABILITY_NOT_VALID 10
-#define WLAN_REASON_SUPPORTED_CHANNEL_NOT_VALID 11
-#define WLAN_REASON_BSS_TRANSITION_DISASSOC 12
-#define WLAN_REASON_INVALID_IE 13
-#define WLAN_REASON_MICHAEL_MIC_FAILURE 14
-#define WLAN_REASON_4WAY_HANDSHAKE_TIMEOUT 15
-#define WLAN_REASON_GROUP_KEY_UPDATE_TIMEOUT 16
-#define WLAN_REASON_IE_IN_4WAY_DIFFERS 17
-#define WLAN_REASON_GROUP_CIPHER_NOT_VALID 18
-#define WLAN_REASON_PAIRWISE_CIPHER_NOT_VALID 19
-#define WLAN_REASON_AKMP_NOT_VALID 20
-#define WLAN_REASON_UNSUPPORTED_RSN_IE_VERSION 21
-#define WLAN_REASON_INVALID_RSN_IE_CAPAB 22
-#define WLAN_REASON_IEEE_802_1X_AUTH_FAILED 23
-#define WLAN_REASON_CIPHER_SUITE_REJECTED 24
-#define WLAN_REASON_TDLS_TEARDOWN_UNREACHABLE 25
-#define WLAN_REASON_TDLS_TEARDOWN_UNSPECIFIED 26
-#define WLAN_REASON_SSP_REQUESTED_DISASSOC 27
-#define WLAN_REASON_NO_SSP_ROAMING_AGREEMENT 28
-#define WLAN_REASON_BAD_CIPHER_OR_AKM 29
-#define WLAN_REASON_NOT_AUTHORIZED_THIS_LOCATION 30
-#define WLAN_REASON_SERVICE_CHANGE_PRECLUDES_TS 31
-#define WLAN_REASON_UNSPECIFIED_QOS_REASON 32
-#define WLAN_REASON_NOT_ENOUGH_BANDWIDTH 33
-#define WLAN_REASON_DISASSOC_LOW_ACK 34
-#define WLAN_REASON_EXCEEDED_TXOP 35
-#define WLAN_REASON_STA_LEAVING 36
-#define WLAN_REASON_END_TS_BA_DLS 37
-#define WLAN_REASON_UNKNOWN_TS_BA 38
-#define WLAN_REASON_TIMEOUT 39
-#define WLAN_REASON_PEERKEY_MISMATCH 45
-#define WLAN_REASON_AUTHORIZED_ACCESS_LIMIT_REACHED 46
-#define WLAN_REASON_EXTERNAL_SERVICE_REQUIREMENTS 47
-#define WLAN_REASON_INVALID_FT_ACTION_FRAME_COUNT 48
-#define WLAN_REASON_INVALID_PMKID 49
-#define WLAN_REASON_INVALID_MDE 50
-#define WLAN_REASON_INVALID_FTE 51
-#define WLAN_REASON_MESH_PEERING_CANCELLED 52
-#define WLAN_REASON_MESH_MAX_PEERS 53
-#define WLAN_REASON_MESH_CONFIG_POLICY_VIOLATION 54
-#define WLAN_REASON_MESH_CLOSE_RCVD 55
-#define WLAN_REASON_MESH_MAX_RETRIES 56
-#define WLAN_REASON_MESH_CONFIRM_TIMEOUT 57
-#define WLAN_REASON_MESH_INVALID_GTK 58
-#define WLAN_REASON_MESH_INCONSISTENT_PARAMS 59
-#define WLAN_REASON_MESH_INVALID_SECURITY_CAP 60
-#define WLAN_REASON_MESH_PATH_ERROR_NO_PROXY_INFO 61
-#define WLAN_REASON_MESH_PATH_ERROR_NO_FORWARDING_INFO 62
-#define WLAN_REASON_MESH_PATH_ERROR_DEST_UNREACHABLE 63
-#define WLAN_REASON_MAC_ADDRESS_ALREADY_EXISTS_IN_MBSS 64
-#define WLAN_REASON_MESH_CHANNEL_SWITCH_REGULATORY_REQ 65
-#define WLAN_REASON_MESH_CHANNEL_SWITCH_UNSPECIFIED 66
-
-#define WLAN_EID_SSID 0
-#define WLAN_EID_SUPP_RATES 1
-#define WLAN_EID_DS_PARAMS 3
-#define WLAN_EID_CF_PARAMS 4
-#define WLAN_EID_TIM 5
-#define WLAN_EID_IBSS_PARAMS 6
-#define WLAN_EID_COUNTRY 7
-#define WLAN_EID_REQUEST 10
-#define WLAN_EID_BSS_LOAD 11
-#define WLAN_EID_EDCA_PARAM_SET 12
-#define WLAN_EID_TSPEC 13
-#define WLAN_EID_TCLAS 14
-#define WLAN_EID_SCHEDULE 15
-#define WLAN_EID_CHALLENGE 16
-#define WLAN_EID_PWR_CONSTRAINT 32
-#define WLAN_EID_PWR_CAPABILITY 33
-#define WLAN_EID_TPC_REQUEST 34
-#define WLAN_EID_TPC_REPORT 35
-#define WLAN_EID_SUPPORTED_CHANNELS 36
-#define WLAN_EID_CHANNEL_SWITCH 37
-#define WLAN_EID_MEASURE_REQUEST 38
-#define WLAN_EID_MEASURE_REPORT 39
-#define WLAN_EID_QUIET 40
-#define WLAN_EID_IBSS_DFS 41
-#define WLAN_EID_ERP_INFO 42
-#define WLAN_EID_TS_DELAY 43
-#define WLAN_EID_TCLAS_PROCESSING 44
-#define WLAN_EID_HT_CAP 45
-#define WLAN_EID_QOS 46
-#define WLAN_EID_RSN 48
-#define WLAN_EID_EXT_SUPP_RATES 50
-#define WLAN_EID_AP_CHANNEL_REPORT 51
-#define WLAN_EID_NEIGHBOR_REPORT 52
-#define WLAN_EID_RCPI 53
-#define WLAN_EID_MOBILITY_DOMAIN 54
-#define WLAN_EID_FAST_BSS_TRANSITION 55
-#define WLAN_EID_TIMEOUT_INTERVAL 56
-#define WLAN_EID_RIC_DATA 57
-#define WLAN_EID_DSE_REGISTERED_LOCATION 58
-#define WLAN_EID_SUPPORTED_OPERATING_CLASSES 59
-#define WLAN_EID_EXT_CHANSWITCH_ANN 60
-#define WLAN_EID_HT_OPERATION 61
-#define WLAN_EID_SECONDARY_CHANNEL_OFFSET 62
-#define WLAN_EID_BSS_AVERAGE_ACCESS_DELAY 63
-#define WLAN_EID_ANTENNA 64
-#define WLAN_EID_RSNI 65
-#define WLAN_EID_MEASUREMENT_PILOT_TRANSMISSION 66
-#define WLAN_EID_BSS_AVAILABLE_ADM_CAPA 67
-#define WLAN_EID_BSS_AC_ACCESS_DELAY 68 /* note: also used by WAPI */
-#define WLAN_EID_TIME_ADVERTISEMENT 69
-#define WLAN_EID_RRM_ENABLED_CAPABILITIES 70
-#define WLAN_EID_MULTIPLE_BSSID 71
-#define WLAN_EID_20_40_BSS_COEXISTENCE 72
-#define WLAN_EID_20_40_BSS_INTOLERANT 73
-#define WLAN_EID_OVERLAPPING_BSS_SCAN_PARAMS 74
-#define WLAN_EID_RIC_DESCRIPTOR 75
-#define WLAN_EID_MMIE 76
-#define WLAN_EID_EVENT_REQUEST 78
-#define WLAN_EID_EVENT_REPORT 79
-#define WLAN_EID_DIAGNOSTIC_REQUEST 80
-#define WLAN_EID_DIAGNOSTIC_REPORT 81
-#define WLAN_EID_LOCATION_PARAMETERS 82
-#define WLAN_EID_NONTRANSMITTED_BSSID_CAPA 83
-#define WLAN_EID_SSID_LIST 84
-#define WLAN_EID_MLTIPLE_BSSID_INDEX 85
-#define WLAN_EID_FMS_DESCRIPTOR 86
-#define WLAN_EID_FMS_REQUEST 87
-#define WLAN_EID_FMS_RESPONSE 88
-#define WLAN_EID_QOS_TRAFFIC_CAPABILITY 89
-#define WLAN_EID_BSS_MAX_IDLE_PERIOD 90
-#define WLAN_EID_TFS_REQ 91
-#define WLAN_EID_TFS_RESP 92
-#define WLAN_EID_WNMSLEEP 93
-#define WLAN_EID_TIM_BROADCAST_REQUEST 94
-#define WLAN_EID_TIM_BROADCAST_RESPONSE 95
-#define WLAN_EID_COLLOCATED_INTERFERENCE_REPORT 96
-#define WLAN_EID_CHANNEL_USAGE 97
-#define WLAN_EID_TIME_ZONE 98
-#define WLAN_EID_DMS_REQUEST 99
-#define WLAN_EID_DMS_RESPONSE 100
-#define WLAN_EID_LINK_ID 101
-#define WLAN_EID_WAKEUP_SCHEDULE 102
-#define WLAN_EID_CHANNEL_SWITCH_TIMING 104
-#define WLAN_EID_PTI_CONTROL 105
-#define WLAN_EID_TPU_BUFFER_STATUS 106
-#define WLAN_EID_INTERWORKING 107
-#define WLAN_EID_ADV_PROTO 108
-#define WLAN_EID_EXPEDITED_BANDWIDTH_REQ 109
-#define WLAN_EID_QOS_MAP_SET 110
-#define WLAN_EID_ROAMING_CONSORTIUM 111
-#define WLAN_EID_EMERGENCY_ALERT_ID 112
-#define WLAN_EID_MESH_CONFIG 113
-#define WLAN_EID_MESH_ID 114
-#define WLAN_EID_MESH_LINK_METRIC_REPORT 115
-#define WLAN_EID_CONGESTION_NOTIFICATION 116
-#define WLAN_EID_PEER_MGMT 117
-#define WLAN_EID_MESH_CHANNEL_SWITCH_PARAMETERS 118
-#define WLAN_EID_MESH_AWAKE_WINDOW 119
-#define WLAN_EID_BEACON_TIMING 120
-#define WLAN_EID_MCCAOP_SETUP_REQUEST 121
-#define WLAN_EID_MCCAOP_SETUP_REPLY 122
-#define WLAN_EID_MCCAOP_ADVERTISEMENT 123
-#define WLAN_EID_MCCAOP_TEARDOWN 124
-#define WLAN_EID_GANN 125
-#define WLAN_EID_RANN 126
-#define WLAN_EID_EXT_CAPAB 127
-#define WLAN_EID_PREQ 130
-#define WLAN_EID_PREP 131
-#define WLAN_EID_PERR 132
-#define WLAN_EID_PXU 137
-#define WLAN_EID_PXUC 138
-#define WLAN_EID_AMPE 139
-#define WLAN_EID_MIC 140
-#define WLAN_EID_DESTINATION_URI 141
-#define WLAN_EID_U_APSD_COEX 142
-#define WLAN_EID_DMG_WAKEUP_SCHEDULE 143
-#define WLAN_EID_EXTENDED_SCHEDULE 144
-#define WLAN_EID_STA_AVAILABILITY 145
-#define WLAN_EID_DMG_TSPEC 146
-#define WLAN_EID_NEXT_DMG_ATI 147
-#define WLAN_EID_DMG_CAPABILITIES 148
-#define WLAN_EID_DMG_OPERATION 151
-#define WLAN_EID_DMG_BSS_PARAMETER_CHANGE 152
-#define WLAN_EID_DMG_BEAM_REFINEMENT 153
-#define WLAN_EID_CHANNEL_MEASUREMENT_FEEDBACK 154
-#define WLAN_EID_CCKM 156
-#define WLAN_EID_AWAKE_WINDOW 157
-#define WLAN_EID_MULTI_BAND 158
-#define WLAN_EID_ADDBA_EXTENSION 159
-#define WLAN_EID_NEXTPCP_LIST 160
-#define WLAN_EID_PCP_HANDOVER 161
-#define WLAN_EID_DMG_LINK_MARGIN 162
-#define WLAN_EID_SWITCHING_STREAM 163
-#define WLAN_EID_SESSION_TRANSITION 164
-#define WLAN_EID_DYNAMIC_TONE_PAIRING_REPORT 165
-#define WLAN_EID_CLUSTER_REPORT 166
-#define WLAN_EID_REPLAY_CAPABILITIES 167
-#define WLAN_EID_RELAY_TRANSFER_PARAM_SET 168
-#define WLAN_EID_BEAMLINK_MAINTENANCE 169
-#define WLAN_EID_MULTIPLE_MAC_SUBLAYERS 170
-#define WLAN_EID_U_PID 171
-#define WLAN_EID_DMG_LINK_ADAPTATION_ACK 172
-#define WLAN_EID_MCCAOP_ADVERTISEMENT_OVERVIEW 174
-#define WLAN_EID_QUIET_PERIOD_REQUEST 175
-#define WLAN_EID_QUIET_PERIOD_RESPONSE 177
-#define WLAN_EID_QMF_POLICY 181
-#define WLAN_EID_ECAPC_POLICY 182
-#define WLAN_EID_CLUSTER_TIME_OFFSET 183
-#define WLAN_EID_INTRA_ACCESS_CATEGORY_PRIORITY 184
-#define WLAN_EID_SCS_DESCRIPTOR 185
-#define WLAN_EID_QLOAD_REPORT 186
-#define WLAN_EID_HCCA_TXOP_UPDATE_COUNT 187
-#define WLAN_EID_HIGHER_LAYER_STREAM_ID 188
-#define WLAN_EID_GCR_GROUP_ADDRESS 189
-#define WLAN_EID_ANTENNA_SECTOR_ID_PATTERN 190
-#define WLAN_EID_VHT_CAP 191
-#define WLAN_EID_VHT_OPERATION 192
-#define WLAN_EID_VHT_EXTENDED_BSS_LOAD 193
-#define WLAN_EID_VHT_WIDE_BW_CHSWITCH  194
-#define WLAN_EID_VHT_TRANSMIT_POWER_ENVELOPE 195
-#define WLAN_EID_VHT_CHANNEL_SWITCH_WRAPPER 196
-#define WLAN_EID_VHT_AID 197
-#define WLAN_EID_VHT_QUIET_CHANNEL 198
-#define WLAN_EID_VHT_OPERATING_MODE_NOTIFICATION 199
-#define WLAN_EID_UPSIM 200
-#define WLAN_EID_REDUCED_NEIGHBOR_REPORT 201
-#define WLAN_EID_TVHT_OPERATION 202
-#define WLAN_EID_DEVICE_LOCATION 204
-#define WLAN_EID_WHITE_SPACE_MAP 205
-#define WLAN_EID_FTM_PARAMETERS 206
-#define WLAN_EID_VENDOR_SPECIFIC 221
-#define WLAN_EID_CAG_NUMBER 237
-#define WLAN_EID_AP_CSN 239
-#define WLAN_EID_FILS_INDICATION 240
-#define WLAN_EID_DILS 241
-#define WLAN_EID_FRAGMENT 242
-#define WLAN_EID_EXTENSION 255
-
-#define WLAN_STATUS_SUCCESS 0
-#define WLAN_STATUS_UNSPECIFIED_FAILURE 1
-#define WLAN_STATUS_TDLS_WAKEUP_ALTERNATE 2
-#define WLAN_STATUS_TDLS_WAKEUP_REJECT 3
-#define WLAN_STATUS_SECURITY_DISABLED 5
-#define WLAN_STATUS_UNACCEPTABLE_LIFETIME 6
-#define WLAN_STATUS_NOT_IN_SAME_BSS 7
-#define WLAN_STATUS_CAPS_UNSUPPORTED 10
-#define WLAN_STATUS_REASSOC_NO_ASSOC 11
-#define WLAN_STATUS_ASSOC_DENIED_UNSPEC 12
-#define WLAN_STATUS_NOT_SUPPORTED_AUTH_ALG 13
-#define WLAN_STATUS_UNKNOWN_AUTH_TRANSACTION 14
-#define WLAN_STATUS_CHALLENGE_FAIL 15
-#define WLAN_STATUS_AUTH_TIMEOUT 16
-#define WLAN_STATUS_AP_UNABLE_TO_HANDLE_NEW_STA 17
-#define WLAN_STATUS_ASSOC_DENIED_RATES 18
-#define WLAN_STATUS_ASSOC_DENIED_NOSHORT 19
-#define WLAN_STATUS_SPEC_MGMT_REQUIRED 22
-#define WLAN_STATUS_PWR_CAPABILITY_NOT_VALID 23
-#define WLAN_STATUS_SUPPORTED_CHANNEL_NOT_VALID 24
-#define WLAN_STATUS_ASSOC_DENIED_NO_SHORT_SLOT_TIME 25
-#define WLAN_STATUS_ASSOC_DENIED_NO_HT 27
-#define WLAN_STATUS_R0KH_UNREACHABLE 28
-#define WLAN_STATUS_ASSOC_DENIED_NO_PCO 29
-#define WLAN_STATUS_ASSOC_REJECTED_TEMPORARILY 30
-#define WLAN_STATUS_ROBUST_MGMT_FRAME_POLICY_VIOLATION 31
-#define WLAN_STATUS_UNSPECIFIED_QOS_FAILURE 32
-#define WLAN_STATUS_DENIED_INSUFFICIENT_BANDWIDTH 33
-#define WLAN_STATUS_DENIED_POOR_CHANNEL_CONDITIONS 34
-#define WLAN_STATUS_DENIED_QOS_NOT_SUPPORTED 35
-#define WLAN_STATUS_REQUEST_DECLINED 37
-#define WLAN_STATUS_INVALID_PARAMETERS 38
-#define WLAN_STATUS_REJECTED_WITH_SUGGESTED_CHANGES 39
-#define WLAN_STATUS_INVALID_IE 40
-#define WLAN_STATUS_GROUP_CIPHER_NOT_VALID 41
-#define WLAN_STATUS_PAIRWISE_CIPHER_NOT_VALID 42
-#define WLAN_STATUS_AKMP_NOT_VALID 43
-#define WLAN_STATUS_UNSUPPORTED_RSN_IE_VERSION 44
-#define WLAN_STATUS_INVALID_RSN_IE_CAPAB 45
-#define WLAN_STATUS_CIPHER_REJECTED_PER_POLICY 46
-#define WLAN_STATUS_TS_NOT_CREATED 47
-#define WLAN_STATUS_DIRECT_LINK_NOT_ALLOWED 48
-#define WLAN_STATUS_DEST_STA_NOT_PRESENT 49
-#define WLAN_STATUS_DEST_STA_NOT_QOS_STA 50
-#define WLAN_STATUS_ASSOC_DENIED_LISTEN_INT_TOO_LARGE 51
-#define WLAN_STATUS_INVALID_FT_ACTION_FRAME_COUNT 52
-#define WLAN_STATUS_INVALID_PMKID 53
-#define WLAN_STATUS_INVALID_MDIE 54
-#define WLAN_STATUS_INVALID_FTIE 55
-#define WLAN_STATUS_REQUESTED_TCLAS_NOT_SUPPORTED 56
-#define WLAN_STATUS_INSUFFICIENT_TCLAS_PROCESSING_RESOURCES 57
-#define WLAN_STATUS_TRY_ANOTHER_BSS 58
-#define WLAN_STATUS_GAS_ADV_PROTO_NOT_SUPPORTED 59
-#define WLAN_STATUS_NO_OUTSTANDING_GAS_REQ 60
-#define WLAN_STATUS_GAS_RESP_NOT_RECEIVED 61
-#define WLAN_STATUS_STA_TIMED_OUT_WAITING_FOR_GAS_RESP 62
-#define WLAN_STATUS_GAS_RESP_LARGER_THAN_LIMIT 63
-#define WLAN_STATUS_REQ_REFUSED_HOME 64
-#define WLAN_STATUS_ADV_SRV_UNREACHABLE 65
-#define WLAN_STATUS_REQ_REFUSED_SSPN 67
-#define WLAN_STATUS_REQ_REFUSED_UNAUTH_ACCESS 68
-#define WLAN_STATUS_INVALID_RSNIE 72
-#define WLAN_STATUS_U_APSD_COEX_NOT_SUPPORTED 73
-#define WLAN_STATUS_U_APSD_COEX_MODE_NOT_SUPPORTED 74
-#define WLAN_STATUS_BAD_INTERVAL_WITH_U_APSD_COEX 75
-#define WLAN_STATUS_ANTI_CLOGGING_TOKEN_REQ 76
-#define WLAN_STATUS_FINITE_CYCLIC_GROUP_NOT_SUPPORTED 77
-#define WLAN_STATUS_CANNOT_FIND_ALT_TBTT 78
-#define WLAN_STATUS_TRANSMISSION_FAILURE 79
-#define WLAN_STATUS_REQ_TCLAS_NOT_SUPPORTED 80
-#define WLAN_STATUS_TCLAS_RESOURCES_EXCHAUSTED 81
-#define WLAN_STATUS_REJECTED_WITH_SUGGESTED_BSS_TRANSITION 82
-#define WLAN_STATUS_REJECT_WITH_SCHEDULE 83
-#define WLAN_STATUS_REJECT_NO_WAKEUP_SPECIFIED 84
-#define WLAN_STATUS_SUCCESS_POWER_SAVE_MODE 85
-#define WLAN_STATUS_PENDING_ADMITTING_FST_SESSION 86
-#define WLAN_STATUS_PERFORMING_FST_NOW 87
-#define WLAN_STATUS_PENDING_GAP_IN_BA_WINDOW 88
-#define WLAN_STATUS_REJECT_U_PID_SETTING 89
-#define WLAN_STATUS_REFUSED_EXTERNAL_REASON 92
-#define WLAN_STATUS_REFUSED_AP_OUT_OF_MEMORY 93
-#define WLAN_STATUS_REJECTED_EMERGENCY_SERVICE_NOT_SUPPORTED 94
-#define WLAN_STATUS_QUERY_RESP_OUTSTANDING 95
-#define WLAN_STATUS_REJECT_DSE_BAND 96
-#define WLAN_STATUS_TCLAS_PROCESSING_TERMINATED 97
-#define WLAN_STATUS_TS_SCHEDULE_CONFLICT 98
-#define WLAN_STATUS_DENIED_WITH_SUGGESTED_BAND_AND_CHANNEL 99
-#define WLAN_STATUS_MCCAOP_RESERVATION_CONFLICT 100
-#define WLAN_STATUS_MAF_LIMIT_EXCEEDED 101
-#define WLAN_STATUS_MCCA_TRACK_LIMIT_EXCEEDED 102
-#define WLAN_STATUS_DENIED_DUE_TO_SPECTRUM_MANAGEMENT 103
-#define WLAN_STATUS_ASSOC_DENIED_NO_VHT 104
-#define WLAN_STATUS_ENABLEMENT_DENIED 105
-#define WLAN_STATUS_RESTRICTION_FROM_AUTHORIZED_GDB 106
-#define WLAN_STATUS_AUTHORIZATION_DEENABLED 107
-#define WLAN_STATUS_FILS_AUTHENTICATION_FAILURE 112
-#define WLAN_STATUS_UNKNOWN_AUTHENTICATION_SERVER 113
 /*****************************end ===>ieee802_11_defs.h*************************************/
 
 /*****************************************start===>wpa_common.h*********************************/
@@ -577,56 +192,9 @@ struct rsn_ie_hdr {
 	u8 version[2]; /* little endian */
 } STRUCT_PACKED;
 
-#define PMKID_LEN 16
-#define PMK_LEN 32
-#define PMK_LEN_SUITE_B_192 48
-#define PMK_LEN_MAX 48
-#define WPA_REPLAY_COUNTER_LEN 8
-#define WPA_NONCE_LEN 32
-#define WPA_KEY_RSC_LEN 8
-#define WPA_GMK_LEN 32
-#define WPA_GTK_MAX_LEN 32
-
-static inline u32 WPA_GET_BE32(const u8 *a)
-{
-	return ((u32) a[0] << 24) | (a[1] << 16) | (a[2] << 8) | a[3];
-}
-#define RSN_SELECTOR_GET(a) WPA_GET_BE32((const u8 *) (a))
-
-#define WPA_SELECTOR_LEN 4
-#define WPA_VERSION 1
-#define RSN_SELECTOR_LEN 4
-#define RSN_VERSION 1
-#define RSN_SELECTOR(a, b, c, d) \
-	((((u32) (a)) << 24) | (((u32) (b)) << 16) | (((u32) (c)) << 8) | (u32) (d))
-	
-#define WPA_OUI_TYPE RSN_SELECTOR(0x00, 0x50, 0xf2, 1)
-#define WPA_AUTH_KEY_MGMT_NONE RSN_SELECTOR(0x00, 0x50, 0xf2, 0)
-#define WPA_AUTH_KEY_MGMT_UNSPEC_802_1X RSN_SELECTOR(0x00, 0x50, 0xf2, 1)
-#define WPA_AUTH_KEY_MGMT_PSK_OVER_802_1X RSN_SELECTOR(0x00, 0x50, 0xf2, 2)
-#define WPA_AUTH_KEY_MGMT_CCKM RSN_SELECTOR(0x00, 0x40, 0x96, 0)
-#define WPA_CIPHER_SUITE_NONE RSN_SELECTOR(0x00, 0x50, 0xf2, 0)
-#define WPA_CIPHER_SUITE_TKIP RSN_SELECTOR(0x00, 0x50, 0xf2, 2)
-#define WPA_CIPHER_SUITE_CCMP RSN_SELECTOR(0x00, 0x50, 0xf2, 4)
-
-#define RSN_AUTH_KEY_MGMT_UNSPEC_802_1X RSN_SELECTOR(0x00, 0x0f, 0xac, 1)
-#define RSN_AUTH_KEY_MGMT_PSK_OVER_802_1X RSN_SELECTOR(0x00, 0x0f, 0xac, 2)
-#define RSN_CIPHER_SUITE_CCMP RSN_SELECTOR(0x00, 0x0f, 0xac, 4)
-#define RSN_CIPHER_SUITE_NONE RSN_SELECTOR(0x00, 0x0f, 0xac, 0)
-#define RSN_CIPHER_SUITE_TKIP RSN_SELECTOR(0x00, 0x0f, 0xac, 2)
-#define RSN_SELECTOR_PUT(a, val) WPA_PUT_BE32((u8 *) (a), (val))
 /*****************************************end===>wpa_common.h*********************************/
 
 /*****************************************start===>common.h*********************************/
-#ifndef bswap_16
-#define bswap_16(a) ((((u16) (a) << 8) & 0xff00) | (((u16) (a) >> 8) & 0xff))
-#endif
-#define le_to_host16(n) bswap_16(n)
-
-#ifndef MAC2STR
-#define MAC2STR(a) (a)[0], (a)[1], (a)[2], (a)[3], (a)[4], (a)[5]
-#define MACSTR "%02x:%02x:%02x:%02x:%02x:%02x"
-#endif
 
 static inline u16 WPA_GET_BE16(const u8 *a)
 {
@@ -676,12 +244,6 @@ static inline void WPA_PUT_LE32(u8 *a, u32 val)
 	a[0] = val & 0xff;
 }
 
-#define SSID_MAX_LEN 32
-#ifndef BIT
-#define BIT(x) (1U << (x))
-#endif
-/* Parsed Information Elements */
-#define MAX_NOF_MB_IES_SUPPORTED 5
 
 struct mb_ies_info {
 	struct {
@@ -804,6 +366,30 @@ struct ieee802_11_elems {
 	     &item->member != (list); \
 	     item = n, n = dl_list_entry(n->member.next, type, member))
 
+struct dl_list {
+	struct dl_list *next;
+	struct dl_list *prev;
+};
+
+static inline void dl_list_init(struct dl_list *list)
+{
+	list->next = list;
+	list->prev = list;
+}
+
+static inline void dl_list_add(struct dl_list *list, struct dl_list *item)
+{
+	item->next = list->next;
+	item->prev = list;
+	list->next->prev = item;
+	list->next = item;
+}
+
+static inline void dl_list_add_tail(struct dl_list *list, struct dl_list *item)
+{
+	dl_list_add(list->prev, item);
+}
+
 static inline void dl_list_del(struct dl_list *item)
 {
 	item->next->prev = item->prev;
@@ -811,11 +397,8 @@ static inline void dl_list_del(struct dl_list *item)
 	item->next = NULL;
 	item->prev = NULL;
 }
-/***************************************end===>list.h******************************************/
 
-/****************************************start===>eloop.h***************************************/
-#define ELOOP_ALL_CTX (void *) -1
-/***************************************end===>eloop.h******************************************/
+/***************************************end===>list.h******************************************/
 
 /*****************************************start===>driver.h**********************************/
 /**
@@ -913,7 +496,7 @@ union wpa_event_data
 		/**
 		 * wmm_params - WMM parameters used in this association.
 		 */
-		struct wmm_params wmm_params;
+//		struct wmm_params wmm_params;
 
 		/**
 		 * addr - Station address (for AP mode)
@@ -1272,7 +855,7 @@ union wpa_event_data
 		int aborted;
 		const int *freqs;
 		size_t num_freqs;
-		struct wpa_driver_scan_ssid ssids[WPAS_MAX_SCAN_SSIDS];
+//		struct wpa_driver_scan_ssid ssids[WPAS_MAX_SCAN_SSIDS];
 		size_t num_ssids;
 		int external_scan;
 		int nl_scan_event;
@@ -1334,7 +917,7 @@ union wpa_event_data
 	/**
 	 * signal_change - Data for EVENT_SIGNAL_CHANGE events
 	 */
-	struct wpa_signal_info signal_change;
+//	struct wpa_signal_info signal_change;
 
 	/**
 	 * struct best_channel - Data for EVENT_BEST_CHANNEL events
@@ -1423,7 +1006,7 @@ union wpa_event_data
 		int freq;
 		int ht_enabled;
 		int ch_offset;
-		enum chan_width ch_width;
+//		enum chan_width ch_width;
 		int cf1;
 		int cf2;
 	} ch_switch;
@@ -1449,7 +1032,7 @@ union wpa_event_data
 		int freq;
 		int ht_enabled;
 		int chan_offset;
-		enum chan_width chan_width;
+//		enum chan_width chan_width;
 		int cf1;
 		int cf2;
         int timeout;
@@ -1473,8 +1056,8 @@ union wpa_event_data
 	 * @alpha2: Country code (or "" if not available)
 	 */
 	struct channel_list_changed {
-		enum reg_change_initiator initiator;
-		enum reg_type type;
+//		enum reg_change_initiator initiator;
+//		enum reg_type type;
 		char alpha2[3];
 	} channel_list_changed;
 
@@ -1483,7 +1066,7 @@ union wpa_event_data
 	 *
 	 * This is used as the data with EVENT_AVOID_FREQUENCIES.
 	 */
-	struct wpa_freq_range_list freq_range;
+//	struct wpa_freq_range_list freq_range;
 
 	/**
 	 * struct mesh_peer
@@ -1517,7 +1100,7 @@ union wpa_event_data
 		u8 vht_seg0_center_ch;
 		u8 vht_seg1_center_ch;
 		u16 ch_width;
-		enum hostapd_hw_mode hw_mode;
+//		enum hostapd_hw_mode hw_mode;
 	} acs_selected_channels;
 
 	/**
@@ -1555,13 +1138,13 @@ struct atheros_driver_data
 	int	we_version;
 	int fils_en;			/* FILS enable/disable in driver */
 	u8	acct_mac[ETH_ALEN];
-	struct hostap_sta_driver_data acct_data;
+//	struct hostap_sta_driver_data acct_data;
 
 	struct l2_packet_data *sock_raw; /* raw 802.11 management frames */
-	struct wpabuf *wpa_ie;
+//	struct wpabuf *wpa_ie;
 //	struct wpabuf *wps_beacon_ie;
 //	struct wpabuf *wps_probe_resp_ie;
-	struct wpa_driver_capa capa;
+//	struct wpa_driver_capa capa;
 	u8	own_addr[ETH_ALEN];
 	int has_capability;
 };
@@ -1569,13 +1152,6 @@ struct atheros_driver_data
 /*****************************************end===>driver.h**********************************/
 
 /*****************************************end===>wpa_auth.h**********************************/
-enum
-{
-	WPA_IE_OK, WPA_INVALID_IE, WPA_INVALID_GROUP, WPA_INVALID_PAIRWISE,
-	WPA_INVALID_AKMP, WPA_NOT_ENABLED, WPA_ALLOC_FAIL,
-	WPA_MGMT_FRAME_PROTECTION_VIOLATION, WPA_INVALID_MGMT_GROUP_CIPHER,
-	WPA_INVALID_MDIE, WPA_INVALID_PROTO
-};
 struct wpa_auth_config
 {
 	int wpa;
@@ -1603,7 +1179,7 @@ struct wpa_auth_config
 struct wpa_auth_callbacks
 {
 	void *ctx;
-	void (*logger)(void *ctx, const u8 *addr, logger_level level,const char *txt);
+//	void (*logger)(void *ctx, const u8 *addr, logger_level level,const char *txt);
 	void (*disconnect)(void *ctx, const u8 *addr, u16 reason);
 	int (*mic_failure_report)(void *ctx, const u8 *addr);
 	void (*psk_failure_report)(void *ctx, const u8 *addr);
@@ -1622,45 +1198,9 @@ struct wpa_auth_callbacks
 /*****************************************end===>wpa_auth.h**********************************/
 
 /*****************************************start===>defs.h**********************************/
-#define WPA_PROTO_WPA BIT(0)
-#define WPA_PROTO_RSN BIT(1)
-#define WPA_CIPHER_NONE BIT(0)
-#define WPA_CIPHER_WEP40 BIT(1)
-#define WPA_CIPHER_WEP104 BIT(2)
-#define WPA_CIPHER_TKIP BIT(3)
-#define WPA_CIPHER_CCMP BIT(4)
-
-#define WPA_AUTH_ALG_OPEN BIT(0)
-#define WPA_AUTH_ALG_SHARED BIT(1)
-#define WPA_AUTH_ALG_LEAP BIT(2)
-#define WPA_AUTH_ALG_FT BIT(3)
-#define WPA_AUTH_ALG_SAE BIT(4)
-#define WPA_AUTH_ALG_FILS BIT(5)
-
-#define WPA_KEY_MGMT_IEEE8021X BIT(0)
-#define WPA_KEY_MGMT_PSK BIT(1)
-#define WPA_KEY_MGMT_NONE BIT(2)
-#define WPA_KEY_MGMT_IEEE8021X_NO_WPA BIT(3)
-#define WPA_KEY_MGMT_WPA_NONE BIT(4)
 
 
-enum wpa_alg
-{
-	WPA_ALG_NONE,
-	WPA_ALG_WEP,
-	WPA_ALG_TKIP,
-	WPA_ALG_CCMP,
-	WPA_ALG_IGTK,
-	WPA_ALG_PMK,
-	WPA_ALG_GCMP,
-	WPA_ALG_SMS4,
-	WPA_ALG_KRK,
-	WPA_ALG_GCMP_256,
-	WPA_ALG_CCMP_256,
-	WPA_ALG_BIP_GMAC_128,
-	WPA_ALG_BIP_GMAC_256,
-	WPA_ALG_BIP_CMAC_256
-};
+
 /*****************************************start===>defs.h**********************************/
 
 /*****************************************start===>wpa_auth_i.h**********************************/
@@ -1696,6 +1236,15 @@ struct wpa_authenticator
 	int identity_request_retry_interval;
 };
 
+struct wpa_ptk {
+	u8 kck[WPA_KCK_MAX_LEN]; /* EAPOL-Key Key Confirmation Key (KCK) */
+	u8 kek[WPA_KEK_MAX_LEN]; /* EAPOL-Key Key Encryption Key (KEK) */
+	u8 tk[WPA_TK_MAX_LEN]; /* Temporal Key (TK) */
+	size_t kck_len;
+	size_t kek_len;
+	size_t tk_len;
+};
+
 struct wpa_state_machine
 {
 	struct wpa_authenticator *wpa_auth;
@@ -1703,22 +1252,6 @@ struct wpa_state_machine
 
 	u8 addr[ETH_ALEN];
 	u8 p2p_dev_addr[ETH_ALEN];
-
-	enum {
-		WPA_PTK_INITIALIZE, WPA_PTK_DISCONNECT, WPA_PTK_DISCONNECTED,
-		WPA_PTK_AUTHENTICATION, WPA_PTK_AUTHENTICATION2,
-		WPA_PTK_INITPMK, WPA_PTK_INITPSK, WPA_PTK_PTKSTART,
-		WPA_PTK_PTKCALCNEGOTIATING, WPA_PTK_PTKCALCNEGOTIATING2,
-		WPA_PTK_PTKINITNEGOTIATING, WPA_PTK_PTKINITDONE
-	} wpa_ptk_state;
-
-	enum {
-		WPA_PTK_GROUP_IDLE = 0,
-		WPA_PTK_GROUP_REKEYNEGOTIATING,
-		WPA_PTK_GROUP_REKEYESTABLISHED,
-		WPA_PTK_GROUP_KEYERROR
-	} wpa_ptk_group_state;
-
 	Boolean Init;
 	Boolean DeauthenticationRequest;
 	Boolean AuthenticationRequest;
@@ -1765,76 +1298,53 @@ struct wpa_state_machine
 	unsigned int update_snonce:1;
 	unsigned int alt_snonce_valid:1;
 	unsigned int is_wnmsleep:1;
-
 	u8 req_replay_counter[WPA_REPLAY_COUNTER_LEN];
 	int req_replay_counter_used;
-
 	u8 *wpa_ie;
 	size_t wpa_ie_len;
+	int pairwise; /* Pairwise cipher suite, WPA_CIPHER_* */
+	int wpa_key_mgmt; /* the selected WPA_KEY_MGMT_* */
+//	struct rsn_pmksa_cache_entry *pmksa;
+	u32 dot11RSNAStatsTKIPLocalMICFailures;
+	u32 dot11RSNAStatsTKIPRemoteMICFailures;
+	int pending_1_of_4_timeout;
+	int identity_request_retry_interval;
+    enum {
+		WPA_PTK_INITIALIZE, WPA_PTK_DISCONNECT, WPA_PTK_DISCONNECTED,
+		WPA_PTK_AUTHENTICATION, WPA_PTK_AUTHENTICATION2,
+		WPA_PTK_INITPMK, WPA_PTK_INITPSK, WPA_PTK_PTKSTART,
+		WPA_PTK_PTKCALCNEGOTIATING, WPA_PTK_PTKCALCNEGOTIATING2,
+		WPA_PTK_PTKINITNEGOTIATING, WPA_PTK_PTKINITDONE
+	} wpa_ptk_state;
 
 	enum {
+		WPA_PTK_GROUP_IDLE = 0,
+		WPA_PTK_GROUP_REKEYNEGOTIATING,
+		WPA_PTK_GROUP_REKEYESTABLISHED,
+		WPA_PTK_GROUP_KEYERROR
+	} wpa_ptk_group_state;
+        
+    enum {
 		WPA_VERSION_NO_WPA = 0 /* WPA not used */,
 		WPA_VERSION_WPA = 1 /* WPA / IEEE 802.11i/D3.0 */,
 		WPA_VERSION_WPA2 = 2 /* WPA2 / IEEE 802.11i */
 	} wpa;
-	int pairwise; /* Pairwise cipher suite, WPA_CIPHER_* */
-	int wpa_key_mgmt; /* the selected WPA_KEY_MGMT_* */
-//	struct rsn_pmksa_cache_entry *pmksa;
-
-	u32 dot11RSNAStatsTKIPLocalMICFailures;
-	u32 dot11RSNAStatsTKIPRemoteMICFailures;
-
-
-	int pending_1_of_4_timeout;
-
-
-	int identity_request_retry_interval; 
 };
-enum
-{
-	WPA_VERSION_NO_WPA = 0 /* WPA not used */,
-	WPA_VERSION_WPA = 1 /* WPA / IEEE 802.11i/D3.0 */,
-	WPA_VERSION_WPA2 = 2 /* WPA2 / IEEE 802.11i */
-} wpa;
 /*****************************************end===>wpa_auth_i.h**********************************/
+typedef long os_time_t;
+typedef void (*eloop_timeout_handler)(void *eloop_data, void *user_ctx);
 
-/*****************************************start===>sta_info.h**********************************/
-/* STA flags */
-#define WLAN_STA_AUTH BIT(0)
-#define WLAN_STA_ASSOC BIT(1)
-#define WLAN_STA_AUTHORIZED BIT(5)
-#define WLAN_STA_PENDING_POLL BIT(6) /* pending activity poll not ACKed */
-#define WLAN_STA_SHORT_PREAMBLE BIT(7)
-#define WLAN_STA_PREAUTH BIT(8)
-#define WLAN_STA_WMM BIT(9)
-#define WLAN_STA_MFP BIT(10)
-#define WLAN_STA_HT BIT(11)
-#define WLAN_STA_WPS BIT(12)
-#define WLAN_STA_MAYBE_WPS BIT(13)
-#define WLAN_STA_WDS BIT(14)
-#define WLAN_STA_ASSOC_REQ_OK BIT(15)
-#define WLAN_STA_WPS2 BIT(16)
-#define WLAN_STA_GAS BIT(17)
-#define WLAN_STA_VHT BIT(18)
-#define WLAN_STA_WNM_SLEEP_MODE BIT(19)
-#define WLAN_STA_VHT_OPMODE_ENABLED BIT(20)
-#define WLAN_STA_VENDOR_VHT BIT(21)
-#define WLAN_STA_PENDING_FILS_ERP BIT(22)
-#define WLAN_STA_PENDING_DISASSOC_CB BIT(29)
-#define WLAN_STA_PENDING_DEAUTH_CB BIT(30)
-#define WLAN_STA_NONERP BIT(31)
-/*****************************************end===>sta_info.h**********************************/
-
-/*****************************************start===>driver.h**********************************/
-#define WPA_STA_AUTHORIZED BIT(0)
-#define WPA_STA_WMM BIT(1)
-#define WPA_STA_SHORT_PREAMBLE BIT(2)
-#define WPA_STA_MFP BIT(3)
-#define WPA_STA_TDLS_PEER BIT(4)
-#define WPA_STA_AUTHENTICATED BIT(5)
-#define WPA_STA_ASSOCIATED BIT(6)
-/*****************************************end===>driver.h**********************************/
-
+struct os_reltime {
+	os_time_t sec;
+	os_time_t usec;
+};
+struct eloop_timeout {
+	struct dl_list list;
+	struct os_reltime time;
+	void *eloop_data;
+	void *user_data;
+	eloop_timeout_handler handler;
+};
 #endif
 
 
